@@ -61,14 +61,27 @@ def solve_weighted_lasso(y, A, D=None, lambd=1):
     problem.solve(verbose=False)
     return x.value
 
-def monte_carlo_simulation_single_weight(generator, num=500, debug=False):
+def best_weighted_lasso_with_fudge_factor(x_real, y, A, D=None):
     """
-    Simulate weighted lasso with the given w and lambda. The generator is
-    expected to expose a next() method returning appropriately generated
-    (x_real,y,A) triples. The mean and std of MSE(x_real,x) across the runs is
-    returned.
-    The variance here does not include Bessel's correction
+    Search for best lambda.
     """
+    candidates = [1e-3, 1e-2, 3e-2, 1e-1, 5e-1, 1, 10, 30, 100, 1000]
+    best_x = None
+    best_dist = 1e18
+    best_lambd = None
+    for lambd in candidates:
+        try:
+            this_x = solve_weighted_lasso(y, A, D, lambd)
+        except:
+            continue
+        this_dist = np.linalg.norm(this_x - x_real)
+        if this_dist < best_dist:
+            best_dist = this_dist
+            best_x = this_x
+            best_lambd = lambd
+    return best_x, best_lambd
+
+def monte_carlo_simulation(generator, num=500, debug=False):
     msum = 0
     msqsum = 0
     rrange = range(num)
@@ -81,9 +94,10 @@ def monte_carlo_simulation_single_weight(generator, num=500, debug=False):
         Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
         Dk = np.diag(Dk)
         # d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
-        x = solve_weighted_lasso(yhat, Ahat, D=Dk, lambd=1)
+        # x = solve_weighted_lasso(yhat, Ahat, D=Dk, lambd=1)
         # x = solve_weighted_lasso(yhat, Ahat, D=None, lambd=d)
-        rrmse = np.sqrt(np.linalg.norm(x-x_real)**2)/np.linalg.norm(x_real)
+        best_x, best_lambd = best_weighted_lasso_with_fudge_factor(x_real, y, A, Dk)
+        rrmse = np.sqrt(np.linalg.norm(best_x-x_real)**2)/np.linalg.norm(x_real)
         msum += rrmse
         msqsum += rrmse**2
     mean = msum / num
