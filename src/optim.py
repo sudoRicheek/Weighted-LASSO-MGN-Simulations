@@ -5,9 +5,14 @@ While some of this functionality exists in Ritesh's code, having an easy one-sto
 outlet for the optimization that we are familiar with will be a great help.
 """
 
+import re
 from globals import *
+from vars import rescale_and_center
+
 import cvxpy as cp
 import numpy as np
+from tqdm import tqdm
+import math
 
 def mse_error(x, y, A):
     """
@@ -21,60 +26,117 @@ def mse_error(x, y, A):
     mse = l2_term.value / x.shape[0]
     return mse
 
-def get_weighted_lasso_objective(x, y, A, w, lambd=1):
+def get_weighted_lasso_objective(x, y, A, D, lambd=1):
     """
     The objective in weighted LASSO is
-    || y - Ax ||^2 + lambd \sum_{i=1}^p |w_i x_i|
+    || y - Ax ||^2 + lambd \sum_{i=1}^p |d_i x_i|
     Parameters:
     @x - The cvxpy variable representing x
     @Y - n x 1 result vector
     @A - n x p sensing matrix
-    @w - p x 1 matrix to be multiplied pre-L1-norm.
+    @d - p x 1 matrix to be multiplied pre-L1-norm.
     @lambd - scalar regularization parameter
     """
-    l2_term = cp.norm2(y - np.matmul(A,x))**2
-    regularizer = cp.norm1(np.multiply(w, x))*lambd
+    l2_term = cp.norm2(y - A@x)**2
+    regularizer = lambd*cp.norm1(D@x)
     return (l2_term + regularizer)
     
 def get_lasso_objective(x, y, A, lambd=1):
     """
     The weighted lasso objective, with all weights equalling 1.
     """
-    w = np.ones(A.shape[-1])
-    return get_weighted_lasso_objective(x, y, A, w, lambd)
+    D = np.eye(A.shape[-1])
+    return get_weighted_lasso_objective(x, y, A, D, lambd)
 
-def solve_weighted_lasso(y, A, w=None, lambd=1):
+def solve_weighted_lasso(y, A, D=None, lambd=1):
     """
     Performs the weighted lasso optimization. Returns the optimal x found.
     """
     x = cp.Variable(A.shape[-1])
-    if w is None:
+    if D is None:
         objective = get_lasso_objective(x, y, A, lambd)
     else:
-        objective = get_weighted_lasso_objective(x, y, A, w, lambd)
+        objective = get_weighted_lasso_objective(x, y, A, D, lambd)
     problem = cp.Problem(cp.Minimize(objective))    
-    problem.solve()
+    problem.solve(verbose=False)
     return x.value
 
-def monte_carlo_simulation(generator, w=None, lambd=1, num=15000):
+def monte_carlo_simulation_single_weight(generator, num=500, debug=False):
     """
     Simulate weighted lasso with the given w and lambda. The generator is
     expected to expose a next() method returning appropriately generated
-    (x_real,y,A) triples. The mean and variance of MSE(x_real,x) across the runs is
+    (x_real,y,A) triples. The mean and std of MSE(x_real,x) across the runs is
     returned.
     The variance here does not include Bessel's correction
     """
     msum = 0
     msqsum = 0
-    for _ in range(num):
+    rrange = range(num)
+    if debug:
+        rrange = tqdm(rrange)
+    for _ in rrange:
         x_real, y, A = generator.next()
-        x = solve_weighted_lasso(y, A, w=w, lambd=lambd)
-        mse = np.linalg.norm(x-x_real)**2 / x.shape[0]
-        msum += mse
-        msqsum += mse**2
+        Ahat, yhat = rescale_and_center(A, y)
+        Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
+        Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
+        Dk = np.diag(Dk)
+        # d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
+        x = solve_weighted_lasso(yhat, Ahat, D=Dk, lambd=1)
+        # x = solve_weighted_lasso(yhat, Ahat, D=None, lambd=d)
+        rrmse = np.sqrt(np.linalg.norm(x-x_real)**2)/np.linalg.norm(x_real)
+        msum += rrmse
+        msqsum += rrmse**2
     mean = msum / num
     var = (msqsum/num) - mean**2
-    return mean, var
+    return mean, math.sqrt(var)
+
+def get_V(A, q):
+    A = A.T
+    p, n = A.shape[0], A.shape[1]
+    V = (n*A - np.sum(A, axis=-1, keepdims=True))/(n*(n-1)*q*(1-q))
+    return np.square(V)
+
+def get_W(A, q):
+    # TODO check V v/s V.T for shape
+    V = get_V(A,q)
+    W = np.sum(np.matmul(V, A), axis=-1)
+    return np.max(W)
+
+def gfunc(theta, n):
+    g = (1 - math.exp(-theta))**(1/n)
+    g = -math.log(1-g)
+    return g
+
+def get_Nhat(y, n, p, q, sigma, return_term=False):
+    denom = n*q - math.sqrt(6*n*q*(1-q)*math.log(p)) - max(q,1-q)*math.log(p)
+    kappa = sigma*math.log(1+qa)
+    term = kappa*math.sqrt(2*gfunc(3*math.log(p), n))
+    assert(term < 1)
+    term = kappa*math.sqrt(6*math.log(p))/(1-term)
+    numer = np.sum(y) + np.sqrt(np.sum(np.square(y)))*term
+    ans = numer/denom
+    if return_term:
+        return ans, term
+    else:
+        return ans
+
+def get_d(A, y, n, p, q, sigma, c=126):
+    Nhat = get_Nhat(y,n,p,q,sigma)
+    W = get_W(A,q)
+    kappa = sigma*math.log(1+qa)
+    term1 = kappa*Nhat*math.sqrt(6*W*math.log(p))
+    term2 = c*((3*math.log(p)/n) + (9*max(q**2, (1-q)**2)*(math.log(p)**2)/(q*(1-q)*n**2)))*Nhat
+    d = term1+term2
+    return d
+
+def get_d_vec(A, y, n, p, q, sigma, c=126):
+    Nhat, term = get_Nhat(y,n,p,q,sigma,return_term=True)
+    V = get_V(A,q)
+    y2 = np.square(y)
+    term1 = np.sqrt(np.matmul(V, y2))*term
+    term2 = c*((3*math.log(p)/n) + (9*max(q**2, (1-q)**2)*(math.log(p)**2)/(q*(1-q)*n**2)))*Nhat
+    ret = term1 + term2
+    return ret    
 
 def _test_lasso(n=15, p=40, sparsity=0.3, noise_constant=0):
     """

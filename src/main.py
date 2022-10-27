@@ -4,6 +4,17 @@ This file has the main driver code. Does not provide any further functionality b
 """
 
 from globals import *
+from vars import Generator
+from optim import monte_carlo_simulation_single_weight
 
+import warnings
+
+def main():
+    # warnings.filterwarnings("ignore")
+    generator = Generator()
+    mean, std = monte_carlo_simulation_single_weight(generator, num=100, debug=True)
+    print("Mean Relative RMSE is {}".format(mean))
+    print("Standard Deviation in Relative RMSE is {}".format(std))
+    
 if __name__ == '__main__':
-    pass
+    main()
