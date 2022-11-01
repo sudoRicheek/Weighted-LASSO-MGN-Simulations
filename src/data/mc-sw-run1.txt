@@ -1,0 +1,41 @@
+500 runs
+n = 300
+p = 1000
+sparsity = 0.04
+
+Mean Relative RMSE is 0.8594137529199244
+Standard Deviation in Relative RMSE is 0.011735856336824542
+
+--------------
+With small q as in Ritesh's code, lambda comes out negative.
+With q = 0.5, got
+lambda = 3091589.6691223886
+Very large, and the solver fails with "cannot make further progress".
+Forcing lambda=1 converges.
+
+Since x has entries up to 2^15, getting large (~1e4) entries is not uncommon.
+L1 norm of x is typicall around 1e6.
+In one run, 
+l1_norm(x_real) = 545818.4432909949
+Nhat = 921825.0375300989
+W = 6.737736986784881
+kappa = 0.02027325540540822
+term1 of d = 312300.81336980633
+
+With exponential distribution (lambda=4.6e-4, around 1% chance of entry > 1e4), values were
+135.92199355733095
+225.8232855924621
+6.677382404621371
+0.02027325540540822
+76.16219196586832
+
+and gives
+UserWarning: Solution may be inaccurate. Try another solver, adjusting the solver settings, or solve with verbose=True for more information.
+  warnings.warn(
+100%|████████████████████████████████████████████████████████████████████████████| 100/100 [01:40<00:00,  1.00s/it]
+Mean Relative RMSE is 0.9999999999999926
+Standard Deviation in Relative RMSE is 1.0536712127723509e-08
+
+With lambda = 1
+Mean Relative RMSE is 0.8281281116812642
+Standard Deviation in Relative RMSE is 0.03196858678455122
