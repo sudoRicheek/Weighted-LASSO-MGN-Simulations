@@ -5,6 +5,7 @@ While some of this functionality exists in Ritesh's code, having an easy one-sto
 outlet for the optimization that we are familiar with will be a great help.
 """
 
+from random import betavariate
 import re
 from globals import *
 from vars import rescale_and_center
@@ -57,21 +58,25 @@ def solve_weighted_lasso(y, A, D=None, lambd=1):
         objective = get_lasso_objective(x, y, A, lambd)
     else:
         objective = get_weighted_lasso_objective(x, y, A, D, lambd)
-    problem = cp.Problem(cp.Minimize(objective))    
+    constraints = [ x >= 0]
+    problem = cp.Problem(cp.Minimize(objective), constraints)    
     problem.solve(verbose=False)
     return x.value
 
-def best_weighted_lasso_with_fudge_factor(x_real, y, A, D=None):
+def best_weighted_lasso_with_fudge_factor(x_real, y, A, D=None, normalize=False):
     """
     Search for best lambda.
     """
-    candidates = [1e-3, 1e-2, 3e-2, 1e-1, 5e-1, 1, 10, 30, 100, 1000]
-    best_x = None
-    best_dist = 1e18
+    candidates_log = math.log(10) * np.linspace(-5, 2, 8)
+    candidates = np.exp(candidates_log)
+    best_x = np.zeros(x_real.shape)
+    best_dist = 1e12
     best_lambd = None
     for lambd in candidates:
         try:
             this_x = solve_weighted_lasso(y, A, D, lambd)
+            if this_x is None:
+                continue
         except:
             continue
         this_dist = np.linalg.norm(this_x - x_real)
@@ -81,28 +86,41 @@ def best_weighted_lasso_with_fudge_factor(x_real, y, A, D=None):
             best_lambd = lambd
     return best_x, best_lambd
 
-def monte_carlo_simulation(generator, num=500, debug=False):
-    msum = 0
-    msqsum = 0
+def monte_carlo_simulation(generator, num=50, debug=False):
+    mean_rrmse = 0
+    mean_sensitivity = 0
+    mean_specificity = 0
+    mean_mcc = 0
+    num_for_mean = 0
     rrange = range(num)
     if debug:
         rrange = tqdm(rrange)
+    best_lambd = None
     for _ in rrange:
+        num_for_mean += 1
         x_real, y, A = generator.next()
         Ahat, yhat = rescale_and_center(A, y)
-        Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
-        Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
-        Dk = np.diag(Dk)
-        # d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
-        # x = solve_weighted_lasso(yhat, Ahat, D=Dk, lambd=1)
-        # x = solve_weighted_lasso(yhat, Ahat, D=None, lambd=d)
-        best_x, best_lambd = best_weighted_lasso_with_fudge_factor(x_real, y, A, Dk)
-        rrmse = np.sqrt(np.linalg.norm(best_x-x_real)**2)/np.linalg.norm(x_real)
-        msum += rrmse
-        msqsum += rrmse**2
-    mean = msum / num
-    var = (msqsum/num) - mean**2
-    return mean, math.sqrt(var)
+        # Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
+        # Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
+        # Dk = np.diag(normalize_weight_vector(Dk))
+        d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
+        Dk = np.eye(x_real.shape[0])
+        if best_lambd is None:
+            best_x, best_lambd = best_weighted_lasso_with_fudge_factor(x_real, yhat, Ahat, Dk)
+        else:
+            best_x = solve_weighted_lasso(yhat, Ahat, Dk, best_lambd)
+        
+        mean_rrmse += get_rrmse(x_real, best_x)
+        sensitivity, specificity, mcc = sensitivity_specificity_and_mcc(x_real, best_x)
+        mean_sensitivity += sensitivity
+        mean_specificity += specificity
+        mean_mcc += mcc
+        
+    mean_rrmse /= num_for_mean
+    mean_sensitivity /= num_for_mean
+    mean_specificity /= num_for_mean
+    mean_mcc /= num_for_mean
+    return mean_rrmse, mean_sensitivity, mean_specificity, mean_mcc
 
 def get_V(A, q):
     A = A.T
@@ -111,7 +129,6 @@ def get_V(A, q):
     return np.square(V)
 
 def get_W(A, q):
-    # TODO check V v/s V.T for shape
     V = get_V(A,q)
     W = np.sum(np.matmul(V, A), axis=-1)
     return np.max(W)
@@ -151,6 +168,27 @@ def get_d_vec(A, y, n, p, q, sigma, c=126):
     term2 = c*((3*math.log(p)/n) + (9*max(q**2, (1-q)**2)*(math.log(p)**2)/(q*(1-q)*n**2)))*Nhat
     ret = term1 + term2
     return ret    
+
+def get_rrmse(original, predicted, epsilon=1e-10):
+    return np.linalg.norm(original-predicted) / \
+        (np.linalg.norm(original) * math.sqrt(original.shape[0]) + epsilon)
+
+def sensitivity_specificity_and_mcc(original, predicted, threshold=0.2):
+    original_discrete = (original > 0.2).astype(np.int64)
+    predicted_discrete = (predicted > 0.2).astype(np.int64)
+    tp = np.sum(np.multiply(original_discrete, predicted_discrete))
+    tn = np.sum(np.multiply(1-original_discrete, 1-predicted_discrete))
+    fp = np.sum(np.multiply(1-original_discrete, predicted_discrete))
+    fn = np.sum(np.multiply(original_discrete, 1-predicted_discrete))
+    sensitivity = (tp / (tp + fn)) if tp+fn > 0 else 1
+    specificity = (tn / (tn + fp)) if tn+fp > 0 else 1
+    mcc_numer = tp*tn - fp*fn
+    mcc_denom = math.sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn))
+    return sensitivity, specificity, (mcc_numer/mcc_denom)
+
+def normalize_weight_vector(weights):
+    p = weights.shape[0]
+    return weights * math.sqrt(p) / np.linalg.norm(weights)
 
 def _test_lasso(n=15, p=40, sparsity=0.3, noise_constant=0):
     """

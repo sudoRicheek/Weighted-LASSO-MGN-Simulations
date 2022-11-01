@@ -22,10 +22,6 @@ class Generator:
     def next(self):
         x_real = get_x(self.p, self.sparsity)
         A = get_A(self.n, self.p, self.q)  
-        # A = scipy.io.loadmat('../Ritesh-Code/Pooling Matrix Design/Balanced'+\
-        #     ' Binary Matrices/Examples/psi_opt_bal_300x1000.mat')['B'].\
-        #     toarray().astype(float)
-        # self.q = np.sum(A)/(A.shape[0]*A.shape[1])
         y = get_y(A, x_real, self.sigma, self.approx)
         return x_real, y, A
         
@@ -34,9 +30,6 @@ def get_A(n=n_default, p=p_default, q=q_bernoulli):
     return np.random.binomial(1, q, size=(n,p))
 
 def get_x(p=p_default, sparsity=sparsity_default):
-    """
-    TODO:Later include Ritesh's model
-    """
     x = np.random.binomial(1, sparsity, size=p)
     x_factor1 = np.random.uniform(0.2, 1000, size=p)
     # x_factor1 = np.random.uniform(0.2, 2**15, size=p)
