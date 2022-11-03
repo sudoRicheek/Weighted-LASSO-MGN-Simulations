@@ -16,6 +16,7 @@ import warnings
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
 def main():
     # warnings.filterwarnings("ignore")
@@ -29,14 +30,14 @@ def main():
     plot = np.zeros((num_ns, num_ss))
     for i, n in enumerate(n_values):
         for j, s in enumerate(sparsity_values):
-            plot[i,j] = performance_map[str(n)][str(s)]['rrmse']*math.sqrt(1000)
+            plot[i,j] = performance_map[str(n)][str(s)]['sensitivity']
     
-    h = sns.heatmap(plot, yticklabels=n_values, xticklabels=sparsity_values, \
+    h = sns.heatmap(plot, cmap=cm.gray, yticklabels=n_values, xticklabels=sparsity_values, \
         annot=True)
     h.set(ylabel='Number of measurements', \
         xlabel='Fraction of people infected', \
-        title='RMSE of unweighted LASSO')
-    plt.savefig('data/plots/rmse-unweighted.png')
+        title='Sensitivity of unweighted LASSO')
+    plt.savefig('data/plots/sensitivity-unweighted.png')
     
     return
     for n in n_values:
@@ -51,7 +52,7 @@ def main():
             else:
                 print("Starting {},{}".format(n, sparsity))
             generator = Generator(n=n, sparsity=sparsity)
-            rrmse, sensitivity, specificity, mcc = monte_carlo_simulation(generator, num=10, debug=True)
+            rrmse, sensitivity, specificity, mcc = monte_carlo_simulation(generator, num=25, debug=True)
             performance_map[nstr][sparsitystr] = {
                 "rrmse" : rrmse,
                 "sensitivity" : sensitivity,
