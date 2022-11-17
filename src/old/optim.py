@@ -49,7 +49,7 @@ def get_lasso_objective(x, y, A, lambd=1):
     D = np.eye(A.shape[-1])
     return get_weighted_lasso_objective(x, y, A, D, lambd)
 
-def solve_weighted_lasso(y, A, D=None, lambd=1, verbose=False):
+def solve_weighted_lasso(y, A, D=None, lambd=1):
     """
     Performs the weighted lasso optimization. Returns the optimal x found.
     """
@@ -60,7 +60,7 @@ def solve_weighted_lasso(y, A, D=None, lambd=1, verbose=False):
         objective = get_weighted_lasso_objective(x, y, A, D, lambd)
     constraints = [ x >= 0]
     problem = cp.Problem(cp.Minimize(objective), constraints)    
-    problem.solve(verbose=verbose)
+    problem.solve(verbose=False)
     return x.value
 
 def best_weighted_lasso_with_fudge_factor(x_real, y, A, D=None, normalize=False):
@@ -86,67 +86,30 @@ def best_weighted_lasso_with_fudge_factor(x_real, y, A, D=None, normalize=False)
             best_lambd = lambd
     return best_x, best_lambd
 
-def monte_carlo_simulation(generator, num=100, num_calibration=5, debug=False, \
-    single_weight=False, best_lambd=None):
+def monte_carlo_simulation(generator, num=50, debug=False):
     mean_rrmse = 0
     mean_sensitivity = 0
     mean_specificity = 0
     mean_mcc = 0
     num_for_mean = 0
     rrange = range(num)
-    crange = range(num_calibration)
     if debug:
         rrange = tqdm(rrange)
-        crange = tqdm(crange)
-    if best_lambd is None:
-        candidates_log = math.log(10) * np.linspace(-5, 2, 20)
-        candidates = np.exp(candidates_log)
-        # Find best fudge factor
-        rrmse_calib = 1e8
-        for candidate in candidates:
-            print("\nCalibration: checking with", candidate,"\n")
-            this_rrmse = 0
-            for _ in tqdm(crange):
-                if this_rrmse > rrmse_calib*num_calibration:
-                    break
-                x_real, y, A = generator.next()
-                Ahat, yhat = rescale_and_center(A, y)
-                if single_weight:
-                    d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
-                    Dk = np.eye(x_real.shape[0])*d
-                else:
-                    Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
-                    Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
-                    Dk = np.diag(normalize_weight_vector(Dk))
-                try:
-                    best_x = solve_weighted_lasso(yhat, Ahat, Dk, candidate, \
-                        lambd=candidate, verbose=False)
-                except:
-                    print("Solver failed for this calibration case - skipping")
-                    this_rrmse = 1e11
-                    break
-                
-                this_rrmse += get_rrmse(x_real, best_x)
-            this_rrmse /= num_calibration
-            if this_rrmse < rrmse_calib:
-                best_lambd = candidate
-                rrmse_calib = this_rrmse
-    
+    best_lambd = None
     for _ in rrange:
+        num_for_mean += 1
         x_real, y, A = generator.next()
         Ahat, yhat = rescale_and_center(A, y)
-        if single_weight:
-            d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
-            Dk = np.eye(x_real.shape[0])*d
+        # Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
+        # Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
+        # Dk = np.diag(normalize_weight_vector(Dk))
+        d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
+        Dk = np.eye(x_real.shape[0])*d
+        if best_lambd is None:
+            best_x, best_lambd = best_weighted_lasso_with_fudge_factor(\
+                x_real, yhat, Ahat, Dk)
         else:
-            Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
-            Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
-            Dk = np.diag(normalize_weight_vector(Dk))
-        try:
-            best_x = solve_weighted_lasso(yhat, Ahat, Dk, candidate)
-            num_for_mean += 1
-        except:
-            continue
+            best_x = solve_weighted_lasso(yhat, Ahat, Dk, best_lambd)
         
         mean_rrmse += get_rrmse(x_real, best_x)
         sensitivity, specificity, mcc = sensitivity_specificity_and_mcc(\
@@ -159,8 +122,7 @@ def monte_carlo_simulation(generator, num=100, num_calibration=5, debug=False, \
     mean_sensitivity /= num_for_mean
     mean_specificity /= num_for_mean
     mean_mcc /= num_for_mean
-    return mean_rrmse, mean_sensitivity, mean_specificity, mean_mcc, \
-        best_lambd
+    return mean_rrmse, mean_sensitivity, mean_specificity, mean_mcc
 
 def get_V(A, q):
     A = A.T
@@ -211,7 +173,7 @@ def get_d_vec(A, y, n, p, q, sigma, c=126):
 
 def get_rrmse(original, predicted, epsilon=1e-10):
     return np.linalg.norm(original-predicted) / \
-        (np.linalg.norm(original) + epsilon)
+        (np.linalg.norm(original) * math.sqrt(original.shape[0]) + epsilon)
 
 def sensitivity_specificity_and_mcc(original, predicted, threshold=0.2):
     original_discrete = (original > 0.2).astype(np.int64)
