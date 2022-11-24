@@ -109,7 +109,9 @@ def monte_carlo_simulation(generator, num=100, num_calibration=5, debug=False, \
             for _ in tqdm(crange):
                 if this_rrmse > rrmse_calib*num_calibration:
                     break
-                x_real, y, A = generator.next()
+                x_real = None
+                while x_real is None:
+                    x_real, y, A = generator.next()
                 Ahat, yhat = rescale_and_center(A, y)
                 if single_weight:
                     d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
@@ -117,10 +119,13 @@ def monte_carlo_simulation(generator, num=100, num_calibration=5, debug=False, \
                 else:
                     Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
                     Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
-                    Dk = np.diag(normalize_weight_vector(Dk))
+                    Dk = np.diag(Dk)
                 try:
-                    best_x = solve_weighted_lasso(yhat, Ahat, Dk, candidate, \
-                        lambd=candidate, verbose=False)
+                    best_x = solve_weighted_lasso(yhat, Ahat, Dk, \
+                        candidate, verbose=False)
+                    if best_x is None:
+                        this_rrmse = 1e11
+                        break
                 except:
                     print("Solver failed for this calibration case - skipping")
                     this_rrmse = 1e11
@@ -131,19 +136,30 @@ def monte_carlo_simulation(generator, num=100, num_calibration=5, debug=False, \
             if this_rrmse < rrmse_calib:
                 best_lambd = candidate
                 rrmse_calib = this_rrmse
-    
+    extra_info = {'best_lambd' : best_lambd}
+    d_avg = 0
+    dk_avg = 0
+    num_mcc_for_mean = 0
     for _ in rrange:
-        x_real, y, A = generator.next()
+        x_real = None
+        while x_real is None:
+            x_real, y, A = generator.next()
         Ahat, yhat = rescale_and_center(A, y)
         if single_weight:
             d = get_d(A, y, generator.n, generator.p, generator.q, generator.sigma)
             Dk = np.eye(x_real.shape[0])*d
+            d_avg += d
         else:
-            Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, generator.sigma)
+            Dk = get_d_vec(A, y, generator.n, generator.p, generator.q, \
+                generator.sigma)
             Dk *= math.sqrt(Dk.shape[0]) / np.linalg.norm(Dk)
-            Dk = np.diag(normalize_weight_vector(Dk))
+            dk_avg += Dk
+            Dk = np.diag(Dk)
         try:
-            best_x = solve_weighted_lasso(yhat, Ahat, Dk, candidate)
+            best_x = solve_weighted_lasso(yhat, Ahat, Dk, best_lambd, \
+                verbose=False)
+            if best_x is None:
+                continue
             num_for_mean += 1
         except:
             continue
@@ -153,14 +169,20 @@ def monte_carlo_simulation(generator, num=100, num_calibration=5, debug=False, \
             x_real, best_x)
         mean_sensitivity += sensitivity
         mean_specificity += specificity
-        mean_mcc += mcc
-        
+        if mcc is not None:
+            num_mcc_for_mean += 1
+            mean_mcc += mcc
+    
+    if not single_weight:
+        dk_avg = (dk_avg/num).tolist()
+    extra_info['d_avg'] = d_avg / num 
+    extra_info['dk_avg'] = dk_avg   
     mean_rrmse /= num_for_mean
     mean_sensitivity /= num_for_mean
     mean_specificity /= num_for_mean
-    mean_mcc /= num_for_mean
+    mean_mcc /= num_mcc_for_mean
     return mean_rrmse, mean_sensitivity, mean_specificity, mean_mcc, \
-        best_lambd
+        extra_info
 
 def get_V(A, q):
     A = A.T
@@ -224,7 +246,8 @@ def sensitivity_specificity_and_mcc(original, predicted, threshold=0.2):
     specificity = (tn / (tn + fp)) if tn+fp > 0 else 1
     mcc_numer = tp*tn - fp*fn
     mcc_denom = math.sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn))
-    return sensitivity, specificity, (mcc_numer/mcc_denom)
+    mcc = (mcc_numer/mcc_denom) if mcc_denom != 0 else None
+    return sensitivity, specificity, mcc
 
 def normalize_weight_vector(weights):
     p = weights.shape[0]

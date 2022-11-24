@@ -65,16 +65,18 @@ def main():
             else:
                 print("Starting {},{}".format(n, sparsity))
             generator = Generator(n=n, sparsity=sparsity)
-            rrmse, sensitivity, specificity, mcc, best_lambd = \
+            rrmse, sensitivity, specificity, mcc, extra_info = \
                 monte_carlo_simulation(generator, num=100, debug=True, \
                     best_lambd=None, single_weight=False)
             performance_map[nstr][sparsitystr] = {
                 "rrmse" : rrmse,
                 "sensitivity" : sensitivity,
                 "specificity" : specificity,
-                "mcc" : mcc
+                "mcc" : mcc,
+                "extra_info" : extra_info
             }
-            json.dump(performance_map, open("data/perf-single-100.json", 'w+'))
+            json.dump(performance_map, open(\
+                "data/perf-100-new-75.json", 'w+'))
     
     """
     print("RRMSE: {}%".format(rrmse*100.0))
