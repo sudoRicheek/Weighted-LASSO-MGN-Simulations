@@ -24,8 +24,8 @@ def main():
     # warnings.filterwarnings("ignore")
     performance_map = {}
     
-    if os.path.exists("data/perf-100-new.json"):
-        performance_map = json.load(open("data/perf-100-new.json"))
+    if os.path.exists("data/perf-100-new-75.json"):
+        performance_map = json.load(open("data/perf-100-new-75.json"))
 
     n_np = np.array(n_values)
     s_np = np.array(sparsity_values)
